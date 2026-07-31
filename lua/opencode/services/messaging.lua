@@ -75,7 +75,18 @@ M.send_message = Promise.async(function(prompt, opts)
 
   update_sent_message_count(1)
 
-  state.api_client
+  -- Context captured for diagnostics if the send fails (e.g. the intermittent
+  -- err_ed5cf817 "Unexpected server error" seen on agent switch).
+  local request_context = {
+    session_id = session_id,
+    agent = params.agent,
+    model = params.model,
+    variant = params.variant,
+    has_system = params.system ~= nil,
+  }
+  log.debug('Sending message to session: ' .. vim.inspect(request_context))
+
+  local ok = state.api_client
     :create_message(session_id, params)
     :and_then(function(response)
       update_sent_message_count(-1)
@@ -83,17 +94,27 @@ M.send_message = Promise.async(function(prompt, opts)
       if not response or not response.info or not response.parts then
         log.notify('Invalid response from opencode: ' .. vim.inspect(response), vim.log.levels.ERROR)
         session_runtime.cancel():await()
-        return
+        return false
       end
 
       M.after_run(prompt)
+      return true
     end)
     :catch(function(err)
-      log.notify('Error sending message to session: ' .. vim.inspect(err), vim.log.levels.ERROR)
+      log.notify(
+        'Error sending message to session: '
+          .. vim.inspect(err)
+          .. '\nRequest context: '
+          .. vim.inspect(request_context),
+        vim.log.levels.ERROR
+      )
       update_sent_message_count(-1)
       session_runtime.cancel():await()
+      return false
     end)
     :await()
+
+  return ok ~= false
 end)
 
 ---@param prompt string

@@ -149,8 +149,41 @@ function M.handle_submit()
     return false
   end
 
-  require('opencode.services.messaging').send_message(input_content)
+  require('opencode.services.messaging')
+    .send_message(input_content)
+    :and_then(function(sent)
+      -- send_message resolves to false when the send failed (e.g. server error on
+      -- agent switch). The buffer was already cleared above, so restore the prompt
+      -- to let the user retry without re-typing.
+      if sent == false then
+        M.restore_failed_prompt(input_content)
+      end
+    end)
+    :catch(function()
+      M.restore_failed_prompt(input_content)
+    end)
   return true
+end
+
+---Restore a prompt into the input buffer after a failed send, without stealing
+---focus. Only refills when the buffer is currently empty so we never clobber a
+---new prompt the user started typing while the send was in flight.
+---@param prompt string
+function M.restore_failed_prompt(prompt)
+  vim.schedule(function()
+    if prompt == nil or prompt == '' then
+      return
+    end
+    if not M.mounted() then
+      return
+    end
+    ---@cast state.windows { input_buf: integer }
+    local current = table.concat(vim.api.nvim_buf_get_lines(state.windows.input_buf, 0, -1, false), '\n')
+    if current ~= '' then
+      return
+    end
+    M.set_content(prompt)
+  end)
 end
 
 M._execute_shell_command = function(command)
@@ -614,7 +647,8 @@ function M.toggle()
 end
 
 ---Hide the input window by closing it
-function M._hide()
+---@param preserve_focus? boolean If true, do not move focus to the output window (keep the user's current window focused)
+function M._hide(preserve_focus)
   local windows = state.windows
   if not M.mounted(windows) then
     return
@@ -642,7 +676,9 @@ function M._hide()
     M._toggling = false
   end)
 
-  output_window.focus_output(true)
+  if not preserve_focus then
+    output_window.focus_output(true)
+  end
 
   if was_at_bottom then
     vim.schedule(function()
@@ -652,7 +688,8 @@ function M._hide()
 end
 
 ---Show the input window by recreating it
-function M._show()
+---@param preserve_focus? boolean If true, keep the user's current window focused instead of focusing the input window
+function M._show(preserve_focus)
   if state.active_session and state.active_session.parentID and config.child_readonly then
     return
   end
@@ -682,7 +719,9 @@ function M._show()
     windows.input_win = float_layout.open_win(windows.input_buf, true, input_config)
     M.setup(windows)
     M._hidden = false
-    M.focus_input()
+    if not preserve_focus then
+      M.focus_input()
+    end
 
     if was_at_bottom then
       vim.schedule(function()
@@ -691,6 +730,11 @@ function M._show()
     end
     return
   end
+
+  -- Capture the user's window so we can restore focus if requested. Creating the
+  -- split requires temporarily focusing the output window, which would otherwise
+  -- steal focus from wherever the user currently is.
+  local prev_win = vim.api.nvim_get_current_win()
 
   vim.api.nvim_set_current_win(output_win)
 
@@ -706,8 +750,14 @@ function M._show()
 
   M._hidden = false
 
-  -- Focus the input window
-  M.focus_input()
+  if preserve_focus then
+    if vim.api.nvim_win_is_valid(prev_win) then
+      vim.api.nvim_set_current_win(prev_win)
+    end
+  else
+    -- Focus the input window
+    M.focus_input()
+  end
 
   if was_at_bottom then
     vim.schedule(function()

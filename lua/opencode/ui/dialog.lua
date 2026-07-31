@@ -38,6 +38,21 @@
 local Dialog = {}
 Dialog.__index = Dialog
 
+---Decide whether hiding/showing the input window for a dialog should preserve the
+---user's current focus instead of grabbing it into the opencode panel.
+---Returns true (preserve focus) when `ui.questions.grab_focus` is disabled AND the
+---user is currently focused outside the opencode windows (e.g. editing a file or in
+---a picker float). When the user is already inside opencode, normal focus behavior
+---is kept so dialog navigation still works as expected.
+---@return boolean
+local function dialog_should_preserve_focus()
+  local config = require('opencode.config')
+  if config.ui.questions.grab_focus then
+    return false
+  end
+  return not require('opencode.ui.ui').is_opencode_focused()
+end
+
 ---Create a new dialog instance
 ---@param config DialogConfig Dialog configuration
 ---@return Dialog
@@ -208,7 +223,7 @@ function Dialog:setup()
   -- Hide input window if configured
   if self._config.hide_input then
     local input_window = require('opencode.ui.input_window')
-    input_window._hide()
+    input_window._hide(dialog_should_preserve_focus())
   end
 
   self:_setup_keymaps()
@@ -224,7 +239,7 @@ function Dialog:teardown()
     local config = require('opencode.config')
     local input_window = require('opencode.ui.input_window')
     if not config.ui.input.auto_hide then
-      input_window._show()
+      input_window._show(dialog_should_preserve_focus())
     end
   end
 end

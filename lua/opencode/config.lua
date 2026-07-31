@@ -198,6 +198,10 @@ M.defaults = {
     questions = {
       use_vim_ui_select = false, -- If true, render questions with vim.ui.select instead of in the output buffer
       inline_other_input = true, -- If true, show an inline floating input for "Other" instead of cmdline prompt
+      -- If true, a question/permission dialog grabs window focus (jumps your cursor into
+      -- the opencode panel). If false (default), the dialog renders without stealing focus
+      -- when your cursor is outside the opencode windows, so editing/other floats are undisturbed.
+      grab_focus = false,
     },
     input = {
       min_height = 0.10,
