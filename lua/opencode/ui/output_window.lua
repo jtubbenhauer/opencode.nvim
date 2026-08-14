@@ -196,8 +196,11 @@ function M.restore_view_topline(win, topline)
     view.topline = math.max(1, topline)
     view.skipcol = 0
     vim.fn.winrestview(view)
-    -- Apply the restored viewport before later line('w$') reads inspect it.
-    vim.cmd('redraw')
+    -- line('w0') runs update_topline() internally, settling the viewport so
+    -- later line('w$') reads are accurate. ':redraw' would do the same, but it
+    -- also parks the terminal cursor in this window and flushes it, flickering
+    -- the user's real cursor on every stream flush.
+    vim.fn.line('w0')
   end)
 end
 

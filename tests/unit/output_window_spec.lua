@@ -214,6 +214,23 @@ describe('output_window.setup', function()
     winrestview_stub:revert()
   end)
 
+  it('restores the topline without forcing a cursor-moving redraw', function()
+    output_window.setup({ output_buf = buf, output_win = win })
+    local lines = {}
+    for i = 1, 40 do
+      lines[i] = 'line ' .. i
+    end
+    output_window.set_lines(lines)
+    vim.api.nvim_win_set_cursor(win, { 5, 0 })
+
+    local cmd_stub = stub(vim, 'cmd')
+    output_window.restore_view_topline(win, 3)
+    cmd_stub:revert()
+
+    assert.stub(cmd_stub).was_not_called_with('redraw')
+    assert.equals(3, output_window.get_visible_top_line(win))
+  end)
+
   it('restores the view when the user is reading away from the bottom', function()
     output_window.setup({ output_buf = buf, output_win = win })
     output_window.set_lines({ 'a', 'b', 'c', 'd' })
