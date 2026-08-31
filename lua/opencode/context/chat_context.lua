@@ -14,6 +14,23 @@ M.context = {
   linter_errors = nil,
 }
 
+local cleared_selections = {}
+local cleared_selections_context = nil
+
+---@param left OpencodeContextSelection|nil
+---@param right OpencodeContextSelection|nil
+---@return boolean
+local function is_same_selection(left, right)
+  return (
+    left
+    and right
+    and left.file
+    and right.file
+    and left.file.path == right.file.path
+    and left.lines == right.lines
+  ) == true
+end
+
 ---@param path string
 ---@param prompt? string
 ---@return OpencodeMessagePart
@@ -162,6 +179,9 @@ end
 -- Global context management functions
 
 function M.add_selection(selection)
+  cleared_selections = {}
+  cleared_selections_context = nil
+
   -- Ensure selections is always a table
   if not M.context.selections then
     M.context.selections = {}
@@ -266,7 +286,22 @@ function M.clear_subagents()
   state.context.set_context_updated_at(vim.uv.now())
 end
 
-function M.unload_attachments()
+---@param selections? OpencodeContextSelection[]
+function M.unload_attachments(selections)
+  cleared_selections = vim.deepcopy(M.context.selections or {})
+  for _, selection in ipairs(selections or {}) do
+    local already_cleared = false
+    for _, cleared_selection in ipairs(cleared_selections) do
+      if is_same_selection(selection, cleared_selection) then
+        already_cleared = true
+        break
+      end
+    end
+    if not already_cleared then
+      table.insert(cleared_selections, vim.deepcopy(selection))
+    end
+  end
+  cleared_selections_context = M.context
   M.context.mentioned_files = {}
   M.context.selections = {}
   state.context.set_context_updated_at(vim.uv.now())
@@ -367,6 +402,16 @@ end
 -- Load function that populates the global context state
 -- This is the core loading logic that was originally in the main context module
 function M.load()
+  local selections_cleared_by_send = {}
+  if cleared_selections_context == M.context then
+    selections_cleared_by_send = cleared_selections
+  else
+    cleared_selections = {}
+    cleared_selections_context = nil
+  end
+  cleared_selections = {}
+  cleared_selections_context = nil
+
   if not state.active_session and not state.is_opening then
     return
   end
@@ -412,7 +457,16 @@ function M.load()
       local selection_file = base_context.get_current_file_for_selection(buf)
       if selection_file then
         local selection = base_context.new_selection(selection_file, current_selection.text, current_selection.lines)
-        M.add_selection(selection)
+        local was_cleared = false
+        for _, cleared_selection in ipairs(selections_cleared_by_send) do
+          if is_same_selection(selection, cleared_selection) then
+            was_cleared = true
+            break
+          end
+        end
+        if not was_cleared then
+          M.add_selection(selection)
+        end
       end
     end
   end

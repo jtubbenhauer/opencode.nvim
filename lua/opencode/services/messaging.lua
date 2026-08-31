@@ -65,6 +65,8 @@ M.send_message = Promise.async(function(prompt, opts)
   params.system = opts.system or config.default_system_prompt or nil
 
   local session_id = state.active_session.id
+  local sent_context = vim.deepcopy(context.get_context())
+  context.unload_attachments()
 
   local function update_sent_message_count(num)
     local sent_message_count = vim.deepcopy(state.user_message_count)
@@ -97,7 +99,7 @@ M.send_message = Promise.async(function(prompt, opts)
         return false
       end
 
-      M.after_run(prompt)
+      M.after_run(prompt, sent_context)
       return true
     end)
     :catch(function(err)
@@ -118,9 +120,13 @@ M.send_message = Promise.async(function(prompt, opts)
 end)
 
 ---@param prompt string
-function M.after_run(prompt)
-  context.unload_attachments()
-  state.session.set_last_sent_context(vim.deepcopy(context.get_context()))
+---@param sent_context? OpencodeContext
+function M.after_run(prompt, sent_context)
+  local context_sent = vim.deepcopy(sent_context or context.get_context())
+  if not sent_context then
+    context.unload_attachments()
+  end
+  state.session.set_last_sent_context(context_sent)
   context.delta_context()
   require('opencode.history').write(prompt)
   vim.g.opencode_abort_count = 0

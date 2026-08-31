@@ -899,6 +899,58 @@ describe('ChatContext.load() preserves selections on file switch', function()
     ChatContext.get_diagnostics = original_get_diagnostics
   end)
 
+  it('should not restore a selection cleared after sending', function()
+    local selection = {
+      file = { path = '/tmp/bar.lua', name = 'bar.lua', extension = 'lua' },
+      content = 'sent selection',
+      lines = '5, 7',
+    }
+    ChatContext.add_selection(selection)
+
+    local original_get_current_buf = BaseContext.get_current_buf
+    local original_get_current_file = BaseContext.get_current_file
+    local original_get_current_file_for_selection = BaseContext.get_current_file_for_selection
+    local original_get_current_cursor_data = BaseContext.get_current_cursor_data
+    local original_is_context_enabled = BaseContext.is_context_enabled
+    local original_get_current_selection = BaseContext.get_current_selection
+    local original_get_diagnostics = ChatContext.get_diagnostics
+
+    BaseContext.get_current_buf = function()
+      return 2, 2
+    end
+    BaseContext.get_current_file = function()
+      return selection.file
+    end
+    BaseContext.get_current_file_for_selection = function()
+      return selection.file
+    end
+    BaseContext.get_current_cursor_data = function()
+      return nil
+    end
+    BaseContext.is_context_enabled = function(context_type)
+      return context_type == 'selection'
+    end
+    BaseContext.get_current_selection = function()
+      return { text = selection.content, lines = selection.lines }
+    end
+    ChatContext.get_diagnostics = function()
+      return {}
+    end
+
+    ChatContext.unload_attachments()
+    ChatContext.load()
+
+    assert.same({}, ChatContext.context.selections)
+
+    BaseContext.get_current_buf = original_get_current_buf
+    BaseContext.get_current_file = original_get_current_file
+    BaseContext.get_current_file_for_selection = original_get_current_file_for_selection
+    BaseContext.get_current_cursor_data = original_get_current_cursor_data
+    BaseContext.is_context_enabled = original_is_context_enabled
+    BaseContext.get_current_selection = original_get_current_selection
+    ChatContext.get_diagnostics = original_get_diagnostics
+  end)
+
   it('should clear stale current_file when current_file context is disabled', function()
     ChatContext.context.current_file = {
       path = '/tmp/stale.lua',

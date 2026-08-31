@@ -8,6 +8,7 @@ loaded.services_messaging_spec = true
 local messaging = require('opencode.services.messaging')
 local session_runtime = require('opencode.services.session_runtime')
 local config_file = require('opencode.config_file')
+local context = require('opencode.context')
 local state = require('opencode.state')
 local Promise = require('opencode.promise')
 local stub = require('luassert.stub')
@@ -280,6 +281,16 @@ describe('opencode.services.messaging', function()
     state.session.set_active({ id = 'sess1' })
     state.session.set_user_message_count({})
 
+    local original_context = vim.deepcopy(context.get_context())
+    context.get_context().mentioned_files = { '/tmp/attached.lua' }
+    context.get_context().selections = {
+      {
+        file = { path = '/tmp/attached.lua', name = 'attached.lua', extension = 'lua' },
+        content = 'selected',
+        lines = '1, 2',
+      },
+    }
+
     local count_before = state.user_message_count['sess1'] or 0
     local count_during = nil
 
@@ -299,8 +310,79 @@ describe('opencode.services.messaging', function()
     assert.equal(0, count_before)
     assert.equal(1, count_during)
     assert.equal(0, count_after)
+    assert.same({}, context.get_context().mentioned_files)
+    assert.same({}, context.get_context().selections)
 
     state.api_client.create_message = orig
     session_runtime.cancel = orig_cancel
+    for key, value in pairs(original_context) do
+      context.get_context()[key] = value
+    end
+  end)
+
+  it('clears attachments before the request is sent', function()
+    state.ui.set_windows({ mock = 'windows' })
+    state.session.set_active({ id = 'sess1' })
+
+    local original_context = vim.deepcopy(context.get_context())
+    context.get_context().mentioned_files = { '/tmp/attached.lua' }
+    context.get_context().selections = {
+      {
+        file = { path = '/tmp/attached.lua', name = 'attached.lua', extension = 'lua' },
+        content = 'selected',
+        lines = '1, 2',
+      },
+    }
+
+    local observed_context
+    local original_create_message = state.api_client.create_message
+    state.api_client.create_message = function(_, _session_id, _params)
+      observed_context = vim.deepcopy(context.get_context())
+      return Promise.new():resolve({ info = { id = 'm1' }, parts = {} })
+    end
+
+    messaging.send_message('hello world'):wait()
+
+    assert.same({}, observed_context.mentioned_files)
+    assert.same({}, observed_context.selections)
+
+    state.api_client.create_message = original_create_message
+    for key, value in pairs(original_context) do
+      context.get_context()[key] = value
+    end
+  end)
+
+  it('clears sent attachments from the active context', function()
+    state.session.set_active({ id = 'sess1' })
+
+    local original_context = vim.deepcopy(context.get_context())
+    local sent_context = {
+      current_file = nil,
+      cursor_data = nil,
+      linter_errors = nil,
+      mentioned_files = { '/tmp/attached.lua' },
+      mentioned_subagents = {},
+      selections = {
+        {
+          file = { path = '/tmp/attached.lua', name = 'attached.lua', extension = 'lua' },
+          content = 'selected',
+          lines = '1, 2',
+        },
+      },
+    }
+    for key, value in pairs(sent_context) do
+      context.get_context()[key] = value
+    end
+
+    local delta_stub = stub(context, 'delta_context')
+    messaging.after_run('hello')
+
+    assert.same({}, context.get_context().mentioned_files)
+    assert.same({}, context.get_context().selections)
+
+    delta_stub:revert()
+    for key, value in pairs(original_context) do
+      context.get_context()[key] = value
+    end
   end)
 end)
