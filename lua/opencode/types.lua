@@ -389,6 +389,7 @@
 ---@field keymap_prefix string
 ---@field opencode_executable 'opencode' | string -- Command run for calling opencode
 ---@field lock_session_to_directory boolean -- If true, active session is preserved across DirChanged events
+---@field session_list_limit number -- Max sessions fetched when listing history. Counts every project, newest first, before the current project's are selected -- raise it to reach further back (server defaults to 100)
 ---@field server OpencodeServerConfig -- Custom/external server configuration
 ---@field keymap OpencodeKeymap
 ---@field ui OpencodeUIConfig

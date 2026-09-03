@@ -35,10 +35,57 @@ function M.get_cache_path(session_id)
   return cache_base .. session_id
 end
 
+---Sessions the server reports for the current project, keyed on the project's
+---worktree rather than the session's recorded directory. Sessions started in a
+---linked worktree record that worktree's path, so a directory-scoped lookup
+---misses them even though they belong to the same project.
+---@return Session[]|nil
+local function list_project_sessions(limit)
+  if not util.is_git_project() then
+    return nil
+  end
+
+  if type(state.api_client.list_sessions_global) ~= 'function' then
+    return nil
+  end
+
+  local root = util.project_root(state.current_cwd or vim.fn.getcwd())
+  local ok, all = pcall(function()
+    return state.api_client:list_sessions_global({ limit = limit }):await()
+  end)
+  if not ok or type(all) ~= 'table' then
+    return nil
+  end
+
+  return vim.tbl_filter(function(session)
+    return session.project and session.project.worktree == root
+  end, all)
+end
+
 ---Get all workspace sessions, sorted and filtered
 ---@return Session[]|nil
 M.get_all_workspace_sessions = Promise.async(function()
-  local sessions = state.api_client:list_sessions():await()
+  local limit = require('opencode.config').values.session_list_limit
+  local sessions = state.api_client:list_sessions(nil, { limit = limit }):await()
+
+  -- The directory-scoped list above misses sibling worktrees, while the global
+  -- list is capped across every project at once. Merging them keeps a busy
+  -- project from crowding a quiet one out of its own history.
+  local project_sessions = list_project_sessions(limit)
+  if project_sessions and #project_sessions > 0 then
+    local merged = {}
+    local seen = {}
+    for _, list in ipairs({ sessions or {}, project_sessions }) do
+      for _, session in ipairs(list) do
+        if session.id and not seen[session.id] then
+          seen[session.id] = true
+          merged[#merged + 1] = session
+        end
+      end
+    end
+    sessions = merged
+  end
+
   if not sessions then
     return nil
   end

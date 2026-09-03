@@ -14,6 +14,7 @@ M.defaults = {
   keymap_prefix = '<leader>o',
   opencode_executable = 'opencode',
   lock_session_to_directory = false,
+  session_list_limit = 500,
   server = {
     url = nil,
     port = nil,

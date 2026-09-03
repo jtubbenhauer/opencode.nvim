@@ -319,17 +319,50 @@ function M.some(tbl, predicate)
 end
 
 local _is_git_project = nil
+local _is_git_project_cwd = nil
 function M.is_git_project()
-  if _is_git_project ~= nil then
-    return _is_git_project
-  end
   local cwd = vim.fn.getcwd()
   if not cwd then
-    _is_git_project = false
+    return false
+  end
+  if _is_git_project ~= nil and _is_git_project_cwd == cwd then
     return _is_git_project
   end
-  _is_git_project = vim.fn.isdirectory(cwd .. '/.git') == 1
+  _is_git_project_cwd = cwd
+  -- A linked worktree has `.git` as a file pointing at the main repo, not a directory.
+  _is_git_project = vim.fn.isdirectory(cwd .. '/.git') == 1 or vim.fn.filereadable(cwd .. '/.git') == 1
   return _is_git_project
+end
+
+local _project_root_cache = {}
+
+---Resolve a directory to the path the opencode server records as a project's
+---worktree. Only the endpoints that list a whole workspace need this: they match
+---`directory` against that recorded worktree, so a linked git worktree matches no
+---project and lists nothing. Everywhere else `directory` is the root the server
+---operates in, and collapsing a worktree onto its main repo sends work to the
+---wrong tree — see `workspace_scope` in `api_client.lua`.
+---@param dir string|nil Defaults to the current working directory
+---@return string
+function M.project_root(dir)
+  dir = dir or vim.fn.getcwd()
+
+  local cached = _project_root_cache[dir]
+  if cached then
+    return cached
+  end
+
+  local root = dir
+  local out = vim.fn.systemlist({ 'git', '-C', dir, 'rev-parse', '--path-format=absolute', '--git-common-dir' })
+  if vim.v.shell_error == 0 and out and out[1] and out[1] ~= '' then
+    local common_dir = vim.fn.substitute(out[1], '/\\+$', '', '')
+    if vim.fs.basename(common_dir) == '.git' then
+      root = vim.fs.dirname(common_dir)
+    end
+  end
+
+  _project_root_cache[dir] = root
+  return root
 end
 
 function M.format_number(n)

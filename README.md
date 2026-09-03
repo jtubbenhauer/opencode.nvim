@@ -123,6 +123,7 @@ require('opencode').setup({
   keymap_prefix = '<leader>o', -- Default keymap prefix for global keymaps change to your preferred prefix and it will be applied to all keymaps starting with <leader>o
   opencode_executable = 'opencode', -- Name of your opencode binary
   snapshot_path = nil, -- Override base path for the snapshot git directory (default: $XDG_DATA_HOME/opencode). Appends /snapshot/<project_id>/<worktree_hash>
+  session_list_limit = 500, -- Sessions fetched when listing history. Sessions from every linked git worktree of the current project are included; raise this to reach further back
 
   -- Server configuration for custom/external opencode servers
   server = {

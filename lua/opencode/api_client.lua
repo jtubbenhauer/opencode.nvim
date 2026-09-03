@@ -5,6 +5,7 @@ local apply_path_map = require('opencode.util').apply_path_map
 local reverse_transform_paths_recursive = require('opencode.util').reverse_transform_paths_recursive
 local transform_paths_recursive = require('opencode.util').transform_paths_recursive
 local is_version_greater_or_equal = require('opencode.util').is_version_greater_or_equal
+local project_root = require('opencode.util').project_root
 
 --- @class OpencodeApiClient
 --- @field base_url string The base URL of the opencode server
@@ -188,29 +189,45 @@ end
 
 -- Session endpoints
 
+--- Scope for the endpoints that list a whole workspace. These match `directory`
+--- against a project's recorded worktree, so a linked git worktree lists nothing
+--- unless it reports its main worktree. Every other endpoint instead treats
+--- `directory` as the root to operate in, and must keep the real cwd.
+--- @return string
+local function workspace_scope()
+  return project_root(state.current_cwd or vim.fn.getcwd())
+end
+
 --- List all sessions
 --- @param directory string|nil Directory path
+--- @param opts? { limit?: number } Optional query parameters
 --- @return Promise<Session[]>
-function OpencodeApiClient:list_sessions(directory)
-  return self:_call('/session', 'GET', nil, { directory = directory })
+function OpencodeApiClient:list_sessions(directory, opts)
+  local query = { directory = directory or workspace_scope(), limit = opts and opts.limit }
+  return self:_call('/session', 'GET', nil, query)
 end
 
 --- List the current status of all sessions in a workspace.
 --- @param directory string|nil Directory path
 --- @return Promise<{[string]: OpencodeSessionStatusInfo}>
 function OpencodeApiClient:list_session_status(directory)
-  return self:_call('/session/status', 'GET', nil, { directory = directory })
+  return self:_call('/session/status', 'GET', nil, { directory = directory or workspace_scope() })
 end
 
 --- List sessions across all projects (experimental global endpoint).
 --- Bypasses _call's automatic directory injection so the server returns all
 --- directories instead of being filtered to the current cwd.
+--- @param opts? { limit?: number } Optional query parameters
 --- @return Promise<GlobalSession[]>
-function OpencodeApiClient:list_sessions_global()
+function OpencodeApiClient:list_sessions_global(opts)
   if not self:_ensure_base_url() then
     return require('opencode.promise').new():reject('No server base url')
   end
-  return server_job.call_api(self.base_url .. '/experimental/session', 'GET')
+  local url = self.base_url .. '/experimental/session'
+  if opts and opts.limit then
+    url = url .. '?limit=' .. tostring(opts.limit)
+  end
+  return server_job.call_api(url, 'GET')
 end
 
 --- Create a new session

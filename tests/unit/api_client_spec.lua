@@ -220,4 +220,95 @@ describe('api_client', function()
 
     server_job.stream_api = original_stream_api
   end)
+
+  describe('directory scoping in a linked worktree', function()
+    local url_encode = require('opencode.util').url_encode
+    local server_job = require('opencode.server_job')
+    local client
+    local tmp, main, linked
+    local captured
+    local original_call_api
+    local original_getcwd
+    local original_current_cwd
+
+    ---Directory the last captured request was scoped to.
+    ---@return string|nil
+    local function requested_directory()
+      local last = captured[#captured]
+      return last and last.url:match('directory=([^&]+)')
+    end
+
+    before_each(function()
+      tmp = vim.fn.tempname()
+      main = tmp .. '/main'
+      linked = tmp .. '/linked'
+      vim.fn.mkdir(main, 'p')
+
+      local function git(args)
+        local cmd = { 'git', '-C', main }
+        vim.list_extend(cmd, args)
+        vim.fn.system(cmd)
+      end
+
+      vim.fn.system({ 'git', 'init', '-q', main })
+      git({ 'config', 'user.email', 'test@example.com' })
+      git({ 'config', 'user.name', 'Test' })
+      git({ 'commit', '-q', '--allow-empty', '-m', 'init' })
+      git({ 'worktree', 'add', '-q', '--detach', linked })
+
+      captured = {}
+      original_call_api = server_job.call_api
+      server_job.call_api = function(url, method, body)
+        table.insert(captured, { url = url, method = method, body = body })
+        return require('opencode.promise').new():resolve({})
+      end
+
+      original_getcwd = vim.fn.getcwd
+      vim.fn.getcwd = function()
+        return linked
+      end
+
+      original_current_cwd = state.current_cwd
+      state.context.set_current_cwd(linked)
+
+      client = api_client.new('http://localhost:8080')
+    end)
+
+    after_each(function()
+      server_job.call_api = original_call_api
+      vim.fn.getcwd = original_getcwd
+      state.context.set_current_cwd(original_current_cwd)
+      vim.fn.delete(tmp, 'rf')
+    end)
+
+    it('creates sessions in the worktree, not the main repo', function()
+      client:create_session()
+      assert.are.equal(url_encode(linked), requested_directory())
+    end)
+
+    it('sends prompts to the worktree', function()
+      client:create_message('ses_1', { parts = {} })
+      assert.are.equal(url_encode(linked), requested_directory())
+    end)
+
+    it('reads file status from the worktree', function()
+      client:get_file_status()
+      assert.are.equal(url_encode(linked), requested_directory())
+    end)
+
+    it('lists sessions against the main worktree', function()
+      client:list_sessions()
+      assert.are.equal(url_encode(main), requested_directory())
+    end)
+
+    it('lists session status against the main worktree', function()
+      client:list_session_status()
+      assert.are.equal(url_encode(main), requested_directory())
+    end)
+
+    it('still honours an explicitly passed directory', function()
+      client:list_sessions(linked)
+      assert.are.equal(url_encode(linked), requested_directory())
+    end)
+  end)
 end)

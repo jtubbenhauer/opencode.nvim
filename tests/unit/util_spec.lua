@@ -433,3 +433,58 @@ describe('util.is_path_in_cwd', function()
     assert.is_true(util.is_path_in_cwd('linked_folder/test.txt'))
   end)
 end)
+
+describe('util.project_root', function()
+  local tmp, main, linked, plain
+
+  before_each(function()
+    tmp = vim.fn.tempname()
+    main = tmp .. '/main'
+    linked = tmp .. '/linked'
+    plain = tmp .. '/plain'
+    vim.fn.mkdir(main, 'p')
+    vim.fn.mkdir(plain, 'p')
+
+    local function git(args)
+      local cmd = { 'git', '-C', main }
+      vim.list_extend(cmd, args)
+      vim.fn.system(cmd)
+    end
+
+    vim.fn.system({ 'git', 'init', '-q', main })
+    git({ 'config', 'user.email', 'test@example.com' })
+    git({ 'config', 'user.name', 'Test' })
+    git({ 'commit', '-q', '--allow-empty', '-m', 'init' })
+    git({ 'worktree', 'add', '-q', '--detach', linked })
+  end)
+
+  after_each(function()
+    vim.fn.delete(tmp, 'rf')
+  end)
+
+  it('resolves a linked worktree to the same root as the main worktree', function()
+    assert.equals(util.project_root(main), util.project_root(linked))
+  end)
+
+  it('does not report a linked worktree as its own root', function()
+    assert.are_not.equals(linked, util.project_root(linked))
+  end)
+
+  it('falls back to the given directory outside a repository', function()
+    assert.equals(plain, util.project_root(plain))
+  end)
+
+  it('treats a linked worktree as a git project despite .git being a file', function()
+    assert.equals(1, vim.fn.filereadable(linked .. '/.git'))
+    assert.equals(0, vim.fn.isdirectory(linked .. '/.git'))
+
+    local original_getcwd = vim.fn.getcwd
+    vim.fn.getcwd = function()
+      return linked
+    end
+    local result = util.is_git_project()
+    vim.fn.getcwd = original_getcwd
+
+    assert.is_true(result)
+  end)
+end)

@@ -591,7 +591,7 @@ function EventManager:_subscribe_to_server_events(server)
     self.throttling_emitter:enqueue(event)
   end
 
-  local directory = state.current_cwd or vim.fn.getcwd()
+  local directory = require('opencode.util').project_root(state.current_cwd or vim.fn.getcwd())
   log.debug('Subscribing to server events for directory: %s', directory)
   self.server_subscription = api_client:subscribe_to_events(directory, emitter)
 end

@@ -251,7 +251,7 @@ function M.sync_from_server()
   end
 
   api_client
-    :list_session_status(state.current_cwd or vim.fn.getcwd())
+    :list_session_status(require('opencode.util').project_root(state.current_cwd or vim.fn.getcwd()))
     :and_then(function(status_map)
       if type(status_map) ~= 'table' then
         return
