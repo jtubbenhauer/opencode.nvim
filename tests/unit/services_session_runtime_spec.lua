@@ -1009,4 +1009,63 @@ describe('opencode.services.session_runtime', function()
       config_file.get_opencode_agents:revert()
     end)
   end)
+
+  describe('session_worktree_mismatch', function()
+    local original_cwd
+
+    before_each(function()
+      original_cwd = state.current_cwd
+    end)
+
+    after_each(function()
+      state.context.set_current_cwd(original_cwd)
+      state.session.set_active(nil)
+    end)
+
+    it('reports no mismatch when the session has no directory', function()
+      state.session.set_active({ id = 'sess1' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      assert.is_nil(session_runtime.session_worktree_mismatch())
+    end)
+
+    it('reports no mismatch when the session belongs to the current directory', function()
+      state.session.set_active({ id = 'sess1', directory = '/repo/wt4' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      assert.is_nil(session_runtime.session_worktree_mismatch())
+    end)
+
+    it('ignores trailing separators when comparing directories', function()
+      state.session.set_active({ id = 'sess1', directory = '/repo/wt4/' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      assert.is_nil(session_runtime.session_worktree_mismatch())
+    end)
+
+    it('returns the session directory and the current directory when they differ', function()
+      state.session.set_active({ id = 'sess1', directory = '/repo/wt2' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      local session_directory, cwd = session_runtime.session_worktree_mismatch()
+
+      assert.equal('/repo/wt2', session_directory)
+      assert.equal('/repo/wt4', cwd)
+    end)
+
+    it('reports a mismatch across unrelated projects', function()
+      state.session.set_active({ id = 'sess1', directory = '/other/project' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      assert.equal('/other/project', session_runtime.session_worktree_mismatch())
+    end)
+
+    it('prefers explicit arguments over state', function()
+      state.session.set_active({ id = 'sess1', directory = '/repo/wt2' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      assert.is_nil(session_runtime.session_worktree_mismatch('/a', '/a'))
+      assert.equal('/b', session_runtime.session_worktree_mismatch('/b', '/a'))
+    end)
+  end)
 end)

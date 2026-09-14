@@ -141,6 +141,28 @@ M.check_cwd = function()
   end
 end
 
+---A session carries the directory it was created in. Opening it from a sibling worktree
+---leaves a transcript full of absolute paths that no longer point at the tree being edited,
+---while tools keep running against the current directory.
+---@param session_directory? string defaults to the active session's directory
+---@param cwd? string defaults to the current working directory
+---@return string? session_directory nil when the session belongs to the current directory
+---@return string? cwd the directory the session is now being used from
+function M.session_worktree_mismatch(session_directory, cwd)
+  session_directory = session_directory or (state.active_session and state.active_session.directory)
+  cwd = cwd or state.current_cwd or vim.fn.getcwd()
+
+  if not session_directory or session_directory == '' or not cwd or cwd == '' then
+    return nil
+  end
+
+  if vim.fs.normalize(session_directory) == vim.fs.normalize(cwd) then
+    return nil
+  end
+
+  return session_directory, cwd
+end
+
 ---@param opts? OpenOpts
 M.open = Promise.async(function(opts)
   opts = opts or { focus = 'input', new_session = false }

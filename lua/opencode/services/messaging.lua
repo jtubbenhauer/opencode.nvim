@@ -10,6 +10,24 @@ local session_runtime = require('opencode.services.session_runtime')
 
 local M = {}
 
+local WORKTREE_MISMATCH_NOTE = table.concat({
+  'The working tree changed since the earlier turns of this conversation.',
+  'Earlier turns ran in `%s`. The working tree is now `%s`.',
+  'Absolute paths from earlier turns are stale: re-resolve every path against `%s` before reading or writing it.',
+}, '\n')
+
+---@param base? string
+---@return string?
+local function build_system_prompt(base)
+  local session_directory, cwd = session_runtime.session_worktree_mismatch()
+  if not session_directory then
+    return base
+  end
+
+  local note = WORKTREE_MISMATCH_NOTE:format(session_directory, cwd, cwd)
+  return base and (note .. '\n\n' .. base) or note
+end
+
 --- Sends a message to the active session.
 --- @param prompt string The message prompt to send.
 --- @param opts? SendMessageOpts
@@ -62,7 +80,7 @@ M.send_message = Promise.async(function(prompt, opts)
   end
 
   params.parts = context.format_message(prompt, opts.context):await()
-  params.system = opts.system or config.default_system_prompt or nil
+  params.system = build_system_prompt(opts.system or config.default_system_prompt)
 
   local session_id = state.active_session.id
   local sent_context = vim.deepcopy(context.get_context())

@@ -385,4 +385,62 @@ describe('opencode.services.messaging', function()
       context.get_context()[key] = value
     end
   end)
+
+  describe('worktree mismatch system prompt', function()
+    local original_cwd
+
+    before_each(function()
+      original_cwd = state.current_cwd
+      state.ui.set_windows({ mock = 'windows' })
+    end)
+
+    after_each(function()
+      state.context.set_current_cwd(original_cwd)
+      state.session.set_active(nil)
+    end)
+
+    local function capture_system(prompt, opts)
+      local captured
+      local orig = state.api_client.create_message
+      state.api_client.create_message = function(_, _, params)
+        captured = params
+        return Promise.new():resolve({ id = 'm1', info = {}, parts = {} })
+      end
+
+      messaging.send_message(prompt, opts):wait()
+      state.api_client.create_message = orig
+
+      return captured and captured.system
+    end
+
+    it('leaves the system prompt untouched when the session matches the directory', function()
+      state.session.set_active({ id = 'sess1', directory = '/repo/wt4' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      assert.is_nil(capture_system('hello'))
+    end)
+
+    it('warns the model about stale paths when the session came from another worktree', function()
+      state.session.set_active({ id = 'sess1', directory = '/repo/wt2' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      local system = capture_system('hello')
+
+      assert.is_string(system)
+      assert.truthy(system:find('/repo/wt2', 1, true))
+      assert.truthy(system:find('/repo/wt4', 1, true))
+    end)
+
+    it('keeps the caller system prompt below the warning', function()
+      state.session.set_active({ id = 'sess1', directory = '/repo/wt2' })
+      state.context.set_current_cwd('/repo/wt4')
+
+      local system = capture_system('hello', { system = 'CALLER PROMPT' })
+
+      assert.is_string(system)
+      assert.truthy(system:find('/repo/wt2', 1, true))
+      assert.truthy(system:find('CALLER PROMPT', 1, true))
+      assert.True(system:find('/repo/wt2', 1, true) < system:find('CALLER PROMPT', 1, true))
+    end)
+  end)
 end)

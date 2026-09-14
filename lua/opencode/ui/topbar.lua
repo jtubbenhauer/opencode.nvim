@@ -46,8 +46,18 @@ local function format_token_info()
   return result
 end
 
-local function create_winbar_text(description, token_info, _)
-  return description .. '%=' .. token_info
+local function create_winbar_text(description, worktree_warning, token_info, _)
+  return description .. worktree_warning .. '%=' .. token_info
+end
+
+local function format_worktree_warning()
+  local session_directory = require('opencode.services.session_runtime').session_worktree_mismatch()
+  if not session_directory then
+    return ''
+  end
+
+  local label = vim.fn.pathshorten(session_directory):gsub('%%', '%%%%')
+  return '%#OpencodeContextWarning#  ⚠ ' .. label .. '%*'
 end
 
 local function get_session_desc()
@@ -81,7 +91,7 @@ function M.render()
 
     local desc = get_session_desc():gsub('%%', '%%%%')
     local token_info = format_token_info()
-    local winbar_str = create_winbar_text(desc, token_info, vim.api.nvim_win_get_width(win))
+    local winbar_str = create_winbar_text(desc, format_worktree_warning(), token_info, vim.api.nvim_win_get_width(win))
     vim.wo[win].winbar = winbar_str
 
     winbar.update_highlights(win, 'OpencodeSessionDescription')
@@ -100,6 +110,7 @@ function M.setup()
   state.store.subscribe('tokens_count', on_change)
   state.store.subscribe('cost', on_change)
   state.store.subscribe('is_opening', on_change)
+  state.store.subscribe('current_cwd', on_change)
   M.render()
 end
 
@@ -110,5 +121,7 @@ function M.close()
   state.store.unsubscribe('is_opencode_focused', on_change)
   state.store.unsubscribe('tokens_count', on_change)
   state.store.unsubscribe('cost', on_change)
+  state.store.unsubscribe('is_opening', on_change)
+  state.store.unsubscribe('current_cwd', on_change)
 end
 return M
