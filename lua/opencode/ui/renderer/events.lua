@@ -1,7 +1,7 @@
 local state = require('opencode.state')
 local config = require('opencode.config')
 local ctx = require('opencode.ui.renderer.ctx')
-local permission_window = require('opencode.ui.permission_window')
+local prompts = ctx.prompt_controllers
 local flush = require('opencode.ui.renderer.flush')
 local reference_facts = require('opencode.ui.reference_facts')
 
@@ -48,6 +48,11 @@ local function find_message_in_state(message_id)
   end
 
   return nil
+end
+
+local function is_session_busy(session_id)
+  local status = require('opencode.ui.loading_animation')._animation.last_status_map[session_id]
+  return status and (status.type == 'busy' or status.type == 'retry') or false
 end
 
 local function is_assistant_message(message)
@@ -146,7 +151,7 @@ end
 
 ---Render pending permissions as a synthetic part at the end of the buffer
 function M.render_permissions_display()
-  local permissions = permission_window.get_all_permissions()
+  local permissions = prompts.permission and prompts.permission.get_all_permissions() or {}
   if not permissions or #permissions == 0 then
     flush.queue_part_removal('permission-display-part')
     flush.queue_message_removal('permission-display-message')
@@ -180,8 +185,11 @@ end
 
 ---Render the current question as a synthetic part at the end of the buffer
 function M.render_question_display()
-  local question_window = require('opencode.ui.question_window')
-  local current_question = question_window._current_question
+  local question_window = prompts.question
+  if not question_window then
+    return
+  end
+  local current_question = question_window.get_current_request()
 
   if question_window.uses_vim_ui_select(current_question) then
     flush.queue_part_removal('question-display-part')
@@ -221,7 +229,10 @@ end
 
 ---Remove the question display from the buffer
 function M.clear_question_display()
-  local question_window = require('opencode.ui.question_window')
+  local question_window = prompts.question
+  if not question_window then
+    return
+  end
   question_window.clear_question()
 end
 
@@ -229,13 +240,21 @@ end
 ---@param message {info: MessageInfo}
 ---@param revert_index? integer
 function M.on_message_updated(message, revert_index)
+  local msg = message --[[@as OpencodeMessage]]
+  if not msg or not msg.info or not msg.info.id or not msg.info.sessionID then
+    return
+  end
+
   if not state.active_session or not state.messages then
     return
   end
 
-  local msg = message --[[@as OpencodeMessage]]
-  if not msg or not msg.info or not msg.info.id or not msg.info.sessionID then
-    return
+  if msg.info.role == 'assistant' then
+    local parent = find_message_in_state(msg.info.parentID)
+    if parent and parent.info and parent.info.queued then
+      parent.info.queued = nil
+      flush.mark_message_dirty(msg.info.parentID)
+    end
   end
 
   if state.active_session.id ~= msg.info.sessionID then
@@ -262,7 +281,9 @@ function M.on_message_updated(message, revert_index)
       flush.mark_message_dirty(msg.info.id)
     end
     local error_changed = not vim.deep_equal(found_msg.info.error, msg.info.error)
+    local queued = found_msg.info.queued
     found_msg.info = msg.info
+    found_msg.info.queued = queued
 
     -- Errors arrive on the message but we display them after the last part.
     -- Re-render the last part (or the header if there are no parts) so the
@@ -276,6 +297,9 @@ function M.on_message_updated(message, revert_index)
       end
     end
   else
+    if msg.info.role == 'user' and is_session_busy(msg.info.sessionID) then
+      msg.info.queued = true
+    end
     table.insert(state.messages, msg)
     ctx.render_state:set_message(msg)
     replay_orphan_parts(msg.info.id)
@@ -437,13 +461,13 @@ function M.on_part_updated(properties, revert_index)
   end
 
   -- Update the permission window if this part has a pending permission
-  if part.callID and state.pending_permissions then
+  if prompts.permission and part.callID and state.pending_permissions then
     for _, permission in ipairs(state.pending_permissions) do
       local tool = permission.tool
       local perm_callID = tool and tool.callID or permission.callID
       local perm_messageID = tool and tool.messageID or permission.messageID
       if perm_callID == part.callID and perm_messageID == part.messageID then
-        permission_window.update_permission_from_part(permission.id, part)
+        prompts.permission.update_permission_from_part(permission.id, part)
         break
       end
     end
@@ -608,7 +632,10 @@ function M.on_permission_updated(permission)
     end
   end)
 
-  permission_window.add_permission(permission)
+  if not prompts.permission then
+    return
+  end
+  prompts.permission.add_permission(permission)
   M.render_permissions_display()
 end
 
@@ -624,8 +651,11 @@ function M.on_permission_replied(properties)
     return
   end
 
-  permission_window.remove_permission(permission_id)
-  state.renderer.set_pending_permissions(vim.deepcopy(permission_window.get_all_permissions()))
+  if not prompts.permission then
+    return
+  end
+  prompts.permission.remove_permission(permission_id)
+  state.renderer.set_pending_permissions(vim.deepcopy(prompts.permission.get_all_permissions()))
 end
 
 ---Handle question.asked — show the question picker UI
@@ -634,7 +664,10 @@ function M.on_question_asked(properties)
   if not properties or not properties.id or not properties.questions then
     return
   end
-  local question_window = require('opencode.ui.question_window')
+  local question_window = prompts.question
+  if not question_window then
+    return
+  end
   question_window.show_question(properties)
 end
 

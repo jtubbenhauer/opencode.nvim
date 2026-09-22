@@ -444,6 +444,7 @@
 
 ---@class BashToolMetadata: ToolMetadataBase
 ---@field output string|nil
+---@field command string|nil
 
 ---@class FileToolMetadata: ToolMetadataBase
 ---@field diff string|nil The diff of changes made to the file
@@ -586,7 +587,6 @@
 ---@field line? integer
 ---@field col? integer
 ---@field token? string
----@field candidate_files? string[]
 
 ---@class RenderedTarget: OutputTarget
 ---@field part_id string
@@ -612,6 +612,8 @@
 ---@field modelID string Model identifier
 ---@field providerID string Provider identifier
 ---@field role 'user'|'assistant'|'system' Role of the message sender
+---@field parentID string|nil Parent user message for assistant messages
+---@field queued boolean|nil Whether prompt arrived while session was busy
 ---@field system_role string|nil Role defined in system messages
 ---@field mode string|nil Agent or mode identifier
 ---@field error table

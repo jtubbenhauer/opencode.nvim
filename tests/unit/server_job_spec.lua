@@ -1,22 +1,25 @@
 local server_job = require('opencode.server_job')
 local Promise = require('opencode.promise')
-
 local curl = require('opencode.curl')
 local assert = require('luassert')
+local log = require('opencode.log')
 
 describe('server_job', function()
   local original_curl_request
   local opencode_server = require('opencode.opencode_server')
   local original_new
+  local original_log_notify
 
   before_each(function()
     original_curl_request = curl.request
     original_new = opencode_server.new
+    original_log_notify = log.notify
   end)
 
   after_each(function()
     curl.request = original_curl_request
     opencode_server.new = original_new
+    log.notify = original_log_notify
   end)
 
   it('exposes expected public functions', function()
@@ -78,6 +81,26 @@ describe('server_job', function()
     end)
 
     assert.same({ 'part1', 'part2' }, collected)
+  end)
+
+  it('does not warn when stream shutdown is intentional', function()
+    local on_exit
+    local notifications = {}
+    log.notify = function(message, level)
+      notifications[#notifications + 1] = { message, level }
+    end
+    curl.request = function(opts)
+      on_exit = opts.on_exit
+      return { pid = 1 }
+    end
+
+    server_job.stream_api('http://localhost:1234/stream', 'GET', nil, function() end)
+
+    on_exit(1, 15, true)
+    assert.same({}, notifications)
+
+    on_exit(1, 15, false)
+    assert.same({ { 'Streaming request exited with code 1', vim.log.levels.WARN } }, notifications)
   end)
 
   it('ensure_server spawns a new opencode server only once', function()
@@ -497,5 +520,88 @@ describe('server_job', function()
       assert.is_not_nil(captured_opts)
       assert.is_nil(captured_opts.headers['Authorization'])
     end)
+  end)
+end)
+
+describe('concurrent server startup', function()
+  local state = require('opencode.state')
+  local config = require('opencode.config')
+  local OpencodeServer = require('opencode.opencode_server')
+  local port_mapping = require('opencode.port_mapping')
+  local original, starts, spawned, callbacks
+  before_each(function()
+    original = {
+      server = state.opencode_server,
+      new = OpencodeServer.new,
+      register = port_mapping.register,
+      url = config.values.server.url,
+    }
+    starts, spawned, callbacks = 0, {}, {}
+    config.values.server.url = nil
+    state.jobs.clear_server()
+    port_mapping.register = function() end
+    OpencodeServer.new = function()
+      local server = { spawn_promise = Promise.new(), url = nil }
+      server.is_running = function(self)
+        return self.job ~= nil
+      end
+      server.get_spawn_promise = function(self)
+        return self.spawn_promise
+      end
+      server.check_health = function()
+        error('startup must finish before health checks run')
+      end
+      server.spawn = function(self, opts)
+        starts = starts + 1
+        self.job = { pid = 123 }
+        spawned[#spawned + 1], callbacks[#callbacks + 1] = self, opts
+      end
+      return server
+    end
+  end)
+  after_each(function()
+    state.jobs.set_server(original.server)
+    OpencodeServer.new, port_mapping.register = original.new, original.register
+    config.values.server.url = original.url
+  end)
+  local function ready(index)
+    local server = spawned[index]
+    server.url = 'http://127.0.0.1:4096'
+    server.spawn_promise:resolve(server)
+    callbacks[index].on_ready(server.job, server.url)
+  end
+  it('shares a single startup between API initialization and panel opening', function()
+    local client = require('opencode.api_client').new()
+    local api = client:_ensure_base_url()
+    local panel = server_job.ensure_server()
+    local another_panel = server_job.ensure_server()
+    assert.equals(1, starts)
+    assert.equals(panel, another_panel)
+    assert.is_false(api:is_resolved())
+    assert.is_false(panel:is_resolved())
+    ready(1)
+    assert.is_true(api:wait())
+    assert.equals(spawned[1], panel:wait())
+  end)
+  it('joins a directly spawned process before health checking it', function()
+    local direct = Promise.new()
+    server_job.spawn_local_server(direct)
+    local panel = server_job.ensure_server()
+    assert.equals(1, starts)
+    ready(1)
+    assert.equals(spawned[1], direct:wait())
+    assert.equals(spawned[1], panel:wait())
+  end)
+  it('releases failed startup so the next request can retry', function()
+    local first = server_job.ensure_server()
+    spawned[1].job = nil
+    callbacks[1].on_error('address already in use')
+    assert.is_false(pcall(function()
+      first:wait()
+    end))
+    local second = server_job.ensure_server()
+    assert.equals(2, starts)
+    ready(2)
+    assert.equals(spawned[2], second:wait())
   end)
 end)

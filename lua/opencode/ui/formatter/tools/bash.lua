@@ -1,6 +1,15 @@
 local icons = require('opencode.ui.icons')
 local M = {}
 
+---@param value any
+---@return string
+local function one_line(value)
+  if type(value) ~= 'string' then
+    return ''
+  end
+  return vim.trim(value:gsub('[\r\n]+', ' '))
+end
+
 ---@param output Output
 ---@param part OpencodeMessagePart
 function M.format(output, part)
@@ -36,9 +45,15 @@ end
 
 ---@param _ OpencodeMessagePart
 ---@param input BashToolInput
+---@param metadata BashToolMetadata
 ---@return string, string, string
-function M.summary(_, input)
-  return icons.get('run'), 'run', input.description or ''
+function M.summary(_, input, metadata)
+  metadata = metadata or {}
+  local command = input.command
+  if not command or command == '' then
+    command = metadata.command
+  end
+  return icons.get('run'), 'run', one_line(command or input.description or '')
 end
 
 return M

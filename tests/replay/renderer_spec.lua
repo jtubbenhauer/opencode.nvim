@@ -6,7 +6,7 @@ local assert = require('luassert')
 local stub = require('luassert.stub')
 local config = require('opencode.config')
 
-local function assert_output_matches(expected, actual, name)
+local function assert_output_matches(expected, actual, name, expected_window_override)
   local normalized_extmarks = helpers.normalize_namespace_ids(actual.extmarks)
 
   local function legacy_effective_bottom(window)
@@ -131,31 +131,36 @@ local function assert_output_matches(expected, actual, name)
     )
   end
 
-  if expected.window then
-    local actual_window = actual.window or {}
-    assert.are.same(expected.window.cursor, actual_window.cursor, 'Window cursor mismatch')
-    assert.are.same(expected.window.line_count, actual_window.line_count, 'Window line_count mismatch')
+  local expected_window = expected.window
+  if expected_window_override then
+    expected_window = vim.tbl_deep_extend('force', vim.deepcopy(expected_window), expected_window_override)
+  end
 
-    local expected_has_effective_bottom = expected.window.effective_bottom ~= nil
+  if expected_window then
+    local actual_window = actual.window or {}
+    assert.are.same(expected_window.cursor, actual_window.cursor, 'Window cursor mismatch')
+    assert.are.same(expected_window.line_count, actual_window.line_count, 'Window line_count mismatch')
+
+    local expected_has_effective_bottom = expected_window.effective_bottom ~= nil
     if expected_has_effective_bottom then
       assert.are.same(
-        expected.window.effective_bottom,
+        expected_window.effective_bottom,
         actual_window.effective_bottom,
         'Window effective_bottom mismatch'
       )
       assert.is_true(
-        visible_bottom_equivalent(expected.window, actual_window),
+        visible_bottom_equivalent(expected_window, actual_window),
         string.format(
           'Window visible_bottom mismatch: expected %s, got %s (effective_bottom=%s)',
-          vim.inspect(expected.window.visible_bottom),
+          vim.inspect(expected_window.visible_bottom),
           vim.inspect(actual_window.visible_bottom),
-          vim.inspect(expected.window.effective_bottom)
+          vim.inspect(expected_window.effective_bottom)
         )
       )
     else
-      local expected_visible_bottom = expected.window.visible_bottom
+      local expected_visible_bottom = expected_window.visible_bottom
       local actual_visible_bottom = actual_window.visible_bottom
-      local expected_effective_bottom = legacy_effective_bottom(expected.window)
+      local expected_effective_bottom = legacy_effective_bottom(expected_window)
       local matches_legacy_bottom_follow = actual_visible_bottom == expected_visible_bottom
         or actual_visible_bottom == expected_effective_bottom
 
@@ -715,6 +720,97 @@ describe('renderer unit tests', function()
     config.ui.output.max_messages = nil
   end)
 
+  describe('interactive displays with max_messages', function()
+    local function make_message(id, text, timestamp)
+      return {
+        info = {
+          id = id,
+          role = 'assistant',
+          sessionID = 'ses_123',
+          time = { created = timestamp },
+        },
+        parts = {
+          {
+            id = id .. '_part',
+            messageID = id,
+            sessionID = 'ses_123',
+            type = 'text',
+            text = text,
+          },
+        },
+      }
+    end
+
+    local function add_message(events, id, text, timestamp)
+      local message = make_message(id, text, timestamp)
+      events.on_message_updated({ info = message.info })
+      events.on_part_updated({ part = message.parts[1] })
+    end
+
+    before_each(function()
+      helpers.replay_setup()
+      config.ui.output.max_messages = 2
+      state.session.set_active({ id = 'ses_123', title = 'Session' })
+    end)
+
+    after_each(function()
+      config.ui.output.max_messages = nil
+      if state.windows then
+        ui.close_windows(state.windows)
+      end
+    end)
+
+    it('keeps permission displays visible after later messages', function()
+      local renderer = require('opencode.ui.renderer')
+      local events = require('opencode.ui.renderer.events')
+      local flush = require('opencode.ui.renderer.flush')
+
+      renderer._render_full_session_data({ make_message('msg_1', 'first', 1), make_message('msg_2', 'second', 2) })
+      events.on_permission_updated({
+        id = 'perm_1',
+        sessionID = 'ses_123',
+        permission = 'bash',
+        title = 'Run command',
+      })
+      add_message(events, 'msg_3', 'third', 3)
+      add_message(events, 'msg_4', 'fourth', 4)
+      flush.flush()
+
+      assert.is_not_nil(renderer.get_rendered_message('permission-display-message'))
+      assert.is_truthy(
+        table
+          .concat(vim.api.nvim_buf_get_lines(state.windows.output_buf, 0, -1, false), '\n')
+          :find('Permission Required', 1, true)
+      )
+    end)
+
+    it('keeps question displays visible after later messages', function()
+      local renderer = require('opencode.ui.renderer')
+      local events = require('opencode.ui.renderer.events')
+      local flush = require('opencode.ui.renderer.flush')
+
+      renderer._render_full_session_data({ make_message('msg_1', 'first', 1), make_message('msg_2', 'second', 2) })
+      events.on_question_asked({
+        id = 'question_1',
+        sessionID = 'ses_123',
+        questions = {
+          {
+            question = 'Pick one',
+            options = { { label = 'One' } },
+          },
+        },
+      })
+      add_message(events, 'msg_3', 'third', 3)
+      add_message(events, 'msg_4', 'fourth', 4)
+      flush.flush()
+
+      assert.is_not_nil(renderer.get_rendered_message('question-display-message'))
+      assert.is_truthy(
+        table.concat(vim.api.nvim_buf_get_lines(state.windows.output_buf, 0, -1, false), '\n'):find('Question', 1, true)
+      )
+    end)
+  end)
+
   it('ignores session.updated for non-active session IDs', function()
     local renderer = require('opencode.ui.renderer')
 
@@ -767,6 +863,7 @@ describe('renderer functional tests', function()
     'multiple-question-ask',
     'shifting-and-multiple-perms',
     'message-removal',
+    'queue',
   }
 
   for _, filepath in ipairs(json_files) do
@@ -821,7 +918,7 @@ describe('renderer functional tests', function()
             end
 
             local actual = helpers.capture_output(state.windows and state.windows.output_buf, output_window.namespace)
-            assert_output_matches(expected, actual, name)
+            assert_output_matches(expected, actual, name, expected.session_window)
           end)
         end
       end
