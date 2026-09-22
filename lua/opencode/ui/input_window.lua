@@ -133,6 +133,10 @@ function M.handle_submit()
 
   local input_content = table.concat(vim.api.nvim_buf_get_lines(windows.input_buf, 0, -1, false), '\n')
   vim.api.nvim_buf_set_lines(windows.input_buf, 0, -1, false, {})
+  vim.api.nvim_exec_autocmds('TextChanged', {
+    buffer = windows.input_buf,
+    modeline = false,
+  })
 
   if input_content == '' then
     return false
@@ -236,7 +240,7 @@ M._prompt_add_to_context = function(cmd, output, exit_code)
 end
 
 M._append_to_input = function(text)
-  if M._hidden then
+  if M.is_hidden() then
     M._show()
   end
 
@@ -413,7 +417,7 @@ function M.recover_input(windows)
 end
 
 function M.focus_input()
-  if M._hidden then
+  if M.is_hidden() then
     M._show()
     return
   end
@@ -442,7 +446,7 @@ function M.set_content(text, windows)
   local lines = type(text) == 'table' and text or vim.split(tostring(text), '\n')
   local has_content = #lines > 1 or (lines[1] and lines[1] ~= '')
 
-  if has_content and M._hidden then
+  if has_content and M.is_hidden() then
     M._show()
     windows = state.windows
   end
@@ -639,7 +643,7 @@ function M.toggle()
     return
   end
 
-  if M._hidden then
+  if M.is_hidden() then
     M._show()
   else
     M._hide()
@@ -769,6 +773,10 @@ end
 ---Check if the input window is currently hidden
 ---@return boolean
 function M.is_hidden()
+  local windows = state.windows
+  if windows and windows.input_buf then
+    return not windows.input_win or not vim.api.nvim_win_is_valid(windows.input_win)
+  end
   return M._hidden
 end
 

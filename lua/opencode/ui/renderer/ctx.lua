@@ -45,6 +45,9 @@ local ctx = {
   },
   flush_scheduled = false, ---@type boolean
   markdown_render_scheduled = false, ---@type boolean
+  symbol_refresh_pending = false, ---@type boolean
+  symbol_refresh_token = 0, ---@type integer
+  symbol_refresh_cycle = nil, ---@type table?
   bulk_mode = false, ---@type boolean
   bulk_buffer_lines = {},
   bulk_extmarks_by_line = {},
@@ -56,11 +59,25 @@ local ctx = {
   part_folds = {},
   ---@type integer|nil Number of messages to render from the end (nil = all)
   lazy_render_count = nil,
+  generation = 0,
+}
+
+local CONTEXT_KEYS = {
+  'render_state',
+  'last_part_formatted',
+  'formatted_parts',
+  'formatted_messages',
+  'pending',
+  'markdown_render_scheduled',
+  'global_folds',
+  'part_folds',
+  'lazy_render_count',
 }
 
 ---Reset all renderer caches and pending state.
 function ctx:reset()
-  self.render_state:reset()
+  self.generation = self.generation + 1
+  self.render_state = RenderState.new()
   self.last_part_formatted = { part_id = nil, formatted_data = nil }
   self.formatted_parts = {}
   self.formatted_messages = {}
@@ -77,9 +94,40 @@ function ctx:reset()
   }
   self.flush_scheduled = false
   self.markdown_render_scheduled = false
+  self.symbol_refresh_pending = false
+  self.symbol_refresh_token = self.symbol_refresh_token + 1
+  self.symbol_refresh_cycle = nil
   self.global_folds = {}
   self.part_folds = {}
   self:bulk_reset()
+end
+
+---@return table
+function ctx:snapshot()
+  local snapshot = {}
+  for _, key in ipairs(CONTEXT_KEYS) do
+    snapshot[key] = self[key]
+  end
+  return snapshot
+end
+
+---@param snapshot table|nil
+---@return boolean
+function ctx:restore(snapshot)
+  self.generation = self.generation + 1
+  if not snapshot then
+    self:reset()
+    return false
+  end
+
+  for _, key in ipairs(CONTEXT_KEYS) do
+    self[key] = snapshot[key]
+  end
+
+  self.flush_scheduled = false
+  self.bulk_mode = false
+  self:bulk_reset()
+  return true
 end
 
 ---Reset the temporary bulk-render accumulators.
@@ -96,6 +144,7 @@ function ctx:has_pending_work(pending)
   pending = pending or self.pending
 
   return self.flush_scheduled
+    or self.symbol_refresh_pending
     or self.bulk_mode
     or #pending.dirty_message_order > 0
     or #pending.dirty_part_order > 0
